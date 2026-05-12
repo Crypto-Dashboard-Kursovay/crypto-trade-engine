@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -10,6 +11,8 @@ from application.strategy_runner import StrategyRunner
 from domain.enums import Side, TimeFrame
 from domain.exceptions import OrderExecutionError, RiskRejectedError
 from domain.models import Candle, Signal
+
+_BOT_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
 
 def _candle(close: Decimal) -> Candle:
@@ -64,7 +67,7 @@ async def test_signal_flows_through_risk_to_executor(
     risk.check.return_value = signal
     executor = AsyncMock()
 
-    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus)
+    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus, bot_id=_BOT_ID)
     await runner.run()
 
     strategy.on_start.assert_awaited_once()
@@ -85,7 +88,7 @@ async def test_no_signal_no_call(event_bus: AsyncMock) -> None:
     risk = AsyncMock()
     executor = AsyncMock()
 
-    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus)
+    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus, bot_id=_BOT_ID)
     await runner.run()
 
     risk.check.assert_not_awaited()
@@ -106,7 +109,7 @@ async def test_risk_rejection_continues_loop_and_publishes_error(
     risk.check.side_effect = RiskRejectedError("not enough balance")
     executor = AsyncMock()
 
-    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus)
+    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus, bot_id=_BOT_ID)
     await runner.run()
 
     executor.execute.assert_not_awaited()
@@ -115,6 +118,7 @@ async def test_risk_rejection_continues_loop_and_publishes_error(
     assert channel == STRATEGY_ERROR
     assert payload["kind"] == "risk_rejected"
     assert payload["strategy"] == "test_strategy"
+    assert payload["bot_id"] == str(_BOT_ID)
     # second candle was still consumed
     assert strategy.on_candle.call_count == 2
 
@@ -133,13 +137,14 @@ async def test_execution_error_publishes_strategy_error(
     executor = AsyncMock()
     executor.execute.side_effect = OrderExecutionError("api down")
 
-    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus)
+    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus, bot_id=_BOT_ID)
     await runner.run()
 
     event_bus.publish.assert_awaited_once()
     channel, payload = event_bus.publish.call_args.args
     assert channel == STRATEGY_ERROR
     assert payload["kind"] == "execution_failed"
+    assert payload["bot_id"] == str(_BOT_ID)
 
 
 async def test_unexpected_exception_propagates(event_bus: AsyncMock, signal: Signal) -> None:
@@ -154,6 +159,6 @@ async def test_unexpected_exception_propagates(event_bus: AsyncMock, signal: Sig
     risk.check.side_effect = RuntimeError("bug in risk manager")
     executor = AsyncMock()
 
-    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus)
+    runner = StrategyRunner(strategy, market_data, risk, executor, event_bus, bot_id=_BOT_ID)
     with pytest.raises(RuntimeError, match="bug in risk manager"):
         await runner.run()

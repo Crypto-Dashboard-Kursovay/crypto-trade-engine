@@ -1,4 +1,5 @@
 import logging
+import uuid
 from collections.abc import Mapping
 from typing import Any
 
@@ -19,6 +20,9 @@ class StrategyRunner:
     pushes resulting Signals through RiskManager and then OrderExecutor. Errors
     on a single candle are logged + published as STRATEGY_ERROR — the loop
     keeps running so one bad signal does not stop the whole strategy.
+
+    `bot_id` присутствует в каждом payload STRATEGY_ERROR, чтобы backend resolver
+    мог точно привязать ошибку к боту (см. Phase 3.1).
     """
 
     def __init__(
@@ -28,12 +32,14 @@ class StrategyRunner:
         risk: RiskManager,
         executor: OrderExecutor,
         event_bus: EventBus,
+        bot_id: uuid.UUID,
     ) -> None:
         self._strategy = strategy
         self._market_data = market_data
         self._risk = risk
         self._executor = executor
         self._event_bus = event_bus
+        self._bot_id = bot_id
 
     async def run(self) -> None:
         await self._strategy.on_start()
@@ -50,15 +56,22 @@ class StrategyRunner:
                 logger.info("Risk rejected signal from %s: %s", self._strategy.name, exc)
                 await self._event_bus.publish(
                     STRATEGY_ERROR,
-                    _err_payload(self._strategy.name, "risk_rejected", str(exc)),
+                    _err_payload(self._bot_id, self._strategy.name, "risk_rejected", str(exc)),
                 )
             except OrderExecutionError as exc:
                 logger.warning("Execution failed for %s: %s", self._strategy.name, exc)
                 await self._event_bus.publish(
                     STRATEGY_ERROR,
-                    _err_payload(self._strategy.name, "execution_failed", str(exc)),
+                    _err_payload(self._bot_id, self._strategy.name, "execution_failed", str(exc)),
                 )
 
 
-def _err_payload(strategy: str, kind: str, message: str) -> Mapping[str, Any]:
-    return {"strategy": strategy, "kind": kind, "message": message}
+def _err_payload(
+    bot_id: uuid.UUID, strategy: str, kind: str, message: str
+) -> Mapping[str, Any]:
+    return {
+        "bot_id": str(bot_id),
+        "strategy": strategy,
+        "kind": kind,
+        "message": message,
+    }

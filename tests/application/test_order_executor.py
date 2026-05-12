@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,8 @@ from domain.enums import OrderStatus, OrderType, Side
 from domain.exceptions import OrderExecutionError
 from domain.interfaces import EventBus, ExchangeAdapter
 from domain.models import Order, Signal
+
+_BOT_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
 
 
 def _order() -> Order:
@@ -37,7 +40,7 @@ def event_bus() -> AsyncMock:
 
 @pytest.fixture
 def executor(adapter: AsyncMock, event_bus: AsyncMock) -> OrderExecutor:
-    return OrderExecutor(adapter=adapter, event_bus=event_bus)
+    return OrderExecutor(adapter=adapter, event_bus=event_bus, bot_id=_BOT_ID)
 
 
 async def test_limit_order_publishes_new_trade(
@@ -57,6 +60,7 @@ async def test_limit_order_publishes_new_trade(
     event_bus.publish.assert_awaited_once()
     channel, payload = event_bus.publish.call_args.args
     assert channel == NEW_TRADE
+    assert payload["bot_id"] == str(_BOT_ID)
     assert payload["order_id"] == "ord-1"
     assert payload["strategy"] == "strat"
     assert payload["side"] == "buy"

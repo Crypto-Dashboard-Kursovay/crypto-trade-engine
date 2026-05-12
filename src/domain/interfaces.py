@@ -8,7 +8,7 @@ from .models import Balance, Candle, Order, Signal
 
 
 class ExchangeAdapter(ABC):
-    """Async port to an exchange. Concrete adapters wrap CCXT (Binance, Bybit, ...)."""
+    """Async port to an exchange. Concrete adapters wrap CCXT (Binance for now)."""
 
     @abstractmethod
     async def fetch_ohlcv(
@@ -31,6 +31,10 @@ class ExchangeAdapter(ABC):
 
     @abstractmethod
     async def get_balance(self) -> Mapping[str, Balance]: ...
+
+    async def close(self) -> None:
+        """Close any held resources (network sessions etc.). Default: no-op."""
+        return None
 
 
 class MarketDataProvider(ABC):
