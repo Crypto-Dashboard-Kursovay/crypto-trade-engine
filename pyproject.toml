@@ -30,6 +30,12 @@ trade-engine = "engine_main:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+py-modules = ["engine_main"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
