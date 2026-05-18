@@ -20,7 +20,11 @@ from .logging import get_logger
 
 logger = get_logger(__name__)
 
-SUPPORTED_EXCHANGES: frozenset[str] = frozenset({"binance"})
+SUPPORTED_EXCHANGES: frozenset[str] = frozenset({"binance", "bybit", "okx", "mexc"})
+
+# OKX и Coinbase Pro требуют третий секрет — passphrase. Используется только при
+# построении ccxt-конфига (ключ "password" в ccxt).
+_PASSPHRASE_EXCHANGES: frozenset[str] = frozenset({"okx"})
 
 _CCXT_STATUS_MAP: dict[str, OrderStatus] = {
     "open": OrderStatus.OPEN,
@@ -48,10 +52,11 @@ def _network_retry() -> Any:
 
 
 class CCXTExchangeAdapter(ExchangeAdapter):
-    """Адаптер биржи поверх ccxt.pro. Phase 1 — только Binance Testnet.
+    """Адаптер биржи поверх ccxt.pro. Поддерживаются Binance, Bybit, OKX, MEXC.
 
-    Конструктор валидирует exchange_name по белому списку, чтобы при
-    добавлении новых бирж не было сюрпризов в рантайме.
+    Конструктор валидирует exchange_name по белому списку, чтобы при добавлении
+    новых бирж не было сюрпризов в рантайме. OKX дополнительно требует passphrase
+    (передаётся в ccxt-конфиг под ключом "password").
     """
 
     def __init__(
@@ -60,6 +65,7 @@ class CCXTExchangeAdapter(ExchangeAdapter):
         api_key: str,
         api_secret: str,
         testnet: bool = True,
+        passphrase: str | None = None,
         exchange: Any | None = None,
     ) -> None:
         if exchange_name not in SUPPORTED_EXCHANGES:
@@ -67,18 +73,21 @@ class CCXTExchangeAdapter(ExchangeAdapter):
                 f"Unsupported exchange '{exchange_name}'. "
                 f"Supported: {sorted(SUPPORTED_EXCHANGES)}"
             )
+        if exchange_name in _PASSPHRASE_EXCHANGES and not passphrase:
+            raise ValueError(f"{exchange_name} requires a passphrase")
         self._exchange_name = exchange_name
         if exchange is not None:
             self._exchange = exchange
         else:
             exchange_class = getattr(ccxtpro, exchange_name)
-            self._exchange = exchange_class(
-                {
-                    "apiKey": api_key,
-                    "secret": api_secret,
-                    "enableRateLimit": True,
-                }
-            )
+            config: dict[str, Any] = {
+                "apiKey": api_key,
+                "secret": api_secret,
+                "enableRateLimit": True,
+            }
+            if passphrase:
+                config["password"] = passphrase
+            self._exchange = exchange_class(config)
             if testnet:
                 self._exchange.set_sandbox_mode(True)
 

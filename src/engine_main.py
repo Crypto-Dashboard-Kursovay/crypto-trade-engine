@@ -36,6 +36,7 @@ def _exchange_factory(cred: DecryptedCredential) -> ExchangeAdapter:
         exchange_name=cred.exchange,
         api_key=cred.api_key,
         api_secret=cred.api_secret,
+        passphrase=cred.passphrase,
         testnet=True,
     )
 

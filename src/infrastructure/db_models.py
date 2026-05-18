@@ -42,3 +42,5 @@ class ExchangeCredential(Base):
     exchange: Mapped[str] = mapped_column(String(32), nullable=False)
     api_key_enc: Mapped[str] = mapped_column(String, nullable=False)
     api_secret_enc: Mapped[str] = mapped_column(String, nullable=False)
+    # OKX / Coinbase Pro используют третий секрет (passphrase). Для прочих — NULL.
+    passphrase_enc: Mapped[str | None] = mapped_column(String, nullable=True)

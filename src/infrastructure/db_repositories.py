@@ -33,6 +33,7 @@ class DecryptedCredential:
     exchange: str
     api_key: str
     api_secret: str
+    passphrase: str | None = None  # OKX и Coinbase Pro
 
 
 class CredentialDecryptError(Exception):
@@ -75,6 +76,11 @@ class CredentialRepository:
             try:
                 api_key = self._fernet.decrypt(row.api_key_enc.encode()).decode()
                 api_secret = self._fernet.decrypt(row.api_secret_enc.encode()).decode()
+                passphrase: str | None = None
+                if row.passphrase_enc:
+                    passphrase = self._fernet.decrypt(
+                        row.passphrase_enc.encode()
+                    ).decode()
             except InvalidToken as exc:
                 logger.error(
                     "credential_decrypt_failed",
@@ -90,4 +96,5 @@ class CredentialRepository:
                 exchange=row.exchange,
                 api_key=api_key,
                 api_secret=api_secret,
+                passphrase=passphrase,
             )
