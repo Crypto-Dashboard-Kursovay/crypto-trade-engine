@@ -24,7 +24,7 @@ class SmaCross(Strategy):
         timeframe: TimeFrame,
         fast_period: int = 50,
         slow_period: int = 200,
-        order_size: Decimal = Decimal("0.001"),
+        order_size: Decimal | str | int | float = Decimal("0.001"),
     ) -> None:
         if fast_period <= 0 or slow_period <= 0:
             raise ValueError("periods must be positive")
@@ -32,7 +32,8 @@ class SmaCross(Strategy):
             raise ValueError(
                 f"fast_period ({fast_period}) must be < slow_period ({slow_period})"
             )
-        if order_size <= 0:
+        order_size_d = Decimal(str(order_size))
+        if order_size_d <= 0:
             raise ValueError("order_size must be > 0")
 
         self.symbol = symbol
@@ -40,7 +41,7 @@ class SmaCross(Strategy):
         self.startup_candle_count = slow_period
         self._fast_period = fast_period
         self._slow_period = slow_period
-        self._order_size = order_size
+        self._order_size = order_size_d
         self._closes: deque[Decimal] = deque(maxlen=slow_period)
         self._prev_fast: Decimal | None = None
         self._prev_slow: Decimal | None = None

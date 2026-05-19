@@ -85,6 +85,9 @@ class BacktestRunner:
         self._equity_curve: list[EquityPoint] = []
         self._initial_balance: dict[str, Decimal] = {}
         self._last_buy_cost: Decimal | None = None  # для PnL пар BUY→SELL
+        # Текущая свеча, чтобы _on_new_trade поставил правильный timestamp
+        # вместо datetime.now() (мы внутри одного event-loop'а, race нет).
+        self._current_candle: Candle | None = None
 
         # Subscribe to engine.new_trade для построения списка сделок
         event_bus.subscribe(NEW_TRADE, self._on_new_trade)
@@ -101,6 +104,7 @@ class BacktestRunner:
         async for candle in self._market_data.subscribe(
             self._strategy.symbol, self._strategy.timeframe
         ):
+            self._current_candle = candle
             # 1. Прогоняем open LIMIT ордера против range этой свечи + обновляем last_close
             self._exchange.on_candle(candle)
 
@@ -143,9 +147,12 @@ class BacktestRunner:
         # для упрощения берём последний fill.
         fills = self._exchange.filled_orders
         fee = fills[-1].fee if fills else Decimal("0")
-        # Точное время свечи у нас в exchange.last_close — но не хранится; берём now-ish.
-        # На бэктесте порядок строк = порядок событий, точное время не критично.
-        timestamp = datetime.now(timezone.utc)
+        # Время — текущей свечи (event runs синхронно из её on_candle).
+        timestamp = (
+            self._current_candle.timestamp
+            if self._current_candle is not None
+            else datetime.now(timezone.utc)
+        )
 
         pnl: Decimal | None = None
         if side is Side.BUY:
