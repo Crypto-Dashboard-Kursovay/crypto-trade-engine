@@ -22,16 +22,22 @@ dev = [
     "mypy>=1.8",
     "fakeredis>=2.23",
 ]
+backtest = [
+    "pyarrow>=15",
+    "pandas>=2.2",
+    "tqdm>=4.66",
+]
 
 [project.scripts]
 trade-engine = "engine_main:main"
+trade-engine-backtest = "backtest_main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["engine_main"]
+py-modules = ["engine_main", "backtest_main"]
 
 [tool.setuptools.package-dir]
 "" = "src"

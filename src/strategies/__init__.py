@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from domain.interfaces import Strategy
 
+from .bollinger_bands import BollingerBands
+from .bollinger_rsi import BollingerRsi
+from .dca import DcaStrategy
+from .macd_cross import MacdCross
+from .rsi_threshold import RsiThreshold
 from .sma_cross import SmaCross
+from .spot_grid import SpotGridStrategy
 
 
 class StrategyRegistry:
@@ -29,7 +35,23 @@ class StrategyRegistry:
 def default_registry() -> StrategyRegistry:
     reg = StrategyRegistry()
     reg.register("SmaCross", SmaCross)
+    reg.register("RsiThreshold", RsiThreshold)
+    reg.register("MacdCross", MacdCross)
+    reg.register("BollingerBands", BollingerBands)
+    reg.register("BollingerRsi", BollingerRsi)
+    reg.register("DcaStrategy", DcaStrategy)
+    reg.register("SpotGridStrategy", SpotGridStrategy)
     return reg
 
 
-__all__ = ["SmaCross", "StrategyRegistry", "default_registry"]
+__all__ = [
+    "BollingerBands",
+    "BollingerRsi",
+    "DcaStrategy",
+    "MacdCross",
+    "RsiThreshold",
+    "SmaCross",
+    "SpotGridStrategy",
+    "StrategyRegistry",
+    "default_registry",
+]
