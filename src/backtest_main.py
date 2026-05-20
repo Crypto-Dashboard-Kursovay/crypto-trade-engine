@@ -41,6 +41,7 @@ from application.backtest_runner import BacktestRunner
 from application.order_executor import OrderExecutor
 from application.risk_manager import RiskManager
 from domain.enums import TimeFrame
+from infrastructure.ccxt_historical import fetch_ohlcv_rows, save_parquet, timeframe_ms
 from infrastructure.csv_market_data import CSVMarketDataProvider
 from infrastructure.in_memory_event_bus import InMemoryEventBus
 from infrastructure.simulated_exchange import SimulatedExchangeAdapter
@@ -58,11 +59,81 @@ def _load_config(path: Path) -> dict[str, Any]:
         return json.load(fh)
 
 
+def _parquet_range(path: Path) -> tuple[int, int] | None:
+    """Возвращает (min_ts_ms, max_ts_ms) кэша или None, если файла/данных нет."""
+    try:
+        import pandas as pd
+    except ImportError:  # pragma: no cover
+        return None
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_parquet(path)
+        if "timestamp" not in df.columns or df.empty:
+            return None
+        return int(df["timestamp"].min()), int(df["timestamp"].max())
+    except Exception:
+        return None
+
+
+async def _ensure_market_data(
+    *,
+    exchange: str,
+    symbol: str,
+    timeframe: TimeFrame,
+    parquet_path: Path,
+    start_ms: int | None,
+    end_ms: int | None,
+) -> CSVMarketDataProvider:
+    """Гибрид: parquet-кэш, иначе докачиваем с реальной биржи и кэшируем.
+
+    Кэш считается покрывающим диапазон, если его свечи начинаются не позже start_ms
+    и заканчиваются не раньше чем за один таймфрейм до end_ms.
+    """
+    tf_str = str(timeframe)
+    covered = False
+    if start_ms is not None and end_ms is not None:
+        rng = _parquet_range(parquet_path)
+        if rng is not None:
+            file_min, file_max = rng
+            step = timeframe_ms(tf_str)
+            covered = file_min <= start_ms and file_max >= end_ms - step
+    elif parquet_path.exists():
+        covered = True
+
+    if not covered:
+        if start_ms is None or end_ms is None:
+            raise ValueError(
+                "date_from_ms/date_to_ms required to fetch historical data"
+            )
+        rows = await fetch_ohlcv_rows(exchange, symbol, tf_str, start_ms, end_ms)
+        if not rows:
+            raise ValueError(
+                f"биржа {exchange} не вернула исторических данных для {symbol} "
+                f"{tf_str} в выбранном диапазоне"
+            )
+        save_parquet(parquet_path, rows)
+
+    provider = CSVMarketDataProvider(
+        parquet_path, symbol, timeframe, start_ms=start_ms, end_ms=end_ms
+    )
+    if not provider.rows:
+        raise ValueError(
+            f"нет свечей {symbol} {tf_str} в выбранном диапазоне дат"
+        )
+    return provider
+
+
 async def _run(config: dict[str, Any]) -> dict[str, Any]:
     strategy_name = str(config["strategy"])
+    exchange = str(config.get("exchange", "binance"))
     symbol = str(config["symbol"])
     timeframe = TimeFrame(str(config["timeframe"]))
     parquet_path = Path(str(config["parquet_path"]))
+    start_ms = config.get("date_from_ms")
+    end_ms = config.get("date_to_ms")
+    start_ms = int(start_ms) if start_ms is not None else None
+    end_ms = int(end_ms) if end_ms is not None else None
 
     params = dict(config.get("params", {}))
     initial_balance = {
@@ -74,7 +145,14 @@ async def _run(config: dict[str, Any]) -> dict[str, Any]:
     min_lot = Decimal(str(config.get("min_lot", "0.00001")))
     snapshot_every = int(config.get("equity_snapshot_every", 100))
 
-    market_data = CSVMarketDataProvider(parquet_path, symbol, timeframe)
+    market_data = await _ensure_market_data(
+        exchange=exchange,
+        symbol=symbol,
+        timeframe=timeframe,
+        parquet_path=parquet_path,
+        start_ms=start_ms,
+        end_ms=end_ms,
+    )
     # Warmup для стратегии берём из тех же исторических свечей —
     # SimExchange отдаст их через fetch_ohlcv. Однако наши новые стратегии
     # инициализируются по on_candle, поэтому warmup пустой OK для большинства.

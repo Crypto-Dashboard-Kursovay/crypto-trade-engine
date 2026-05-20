@@ -78,13 +78,22 @@ class CSVMarketDataProvider(MarketDataProvider):
         path: Path | str,
         symbol: str,
         timeframe: TimeFrame,
+        start_ms: int | None = None,
+        end_ms: int | None = None,
     ) -> None:
         self._path = Path(path)
         if not self._path.exists():
             raise FileNotFoundError(f"market data file not found: {self._path}")
         self._symbol = symbol
         self._timeframe = timeframe
-        self._rows = _load_rows(self._path)
+        rows = _load_rows(self._path)
+        # Фильтрация по диапазону [start_ms, end_ms] — бэктест считает метрики
+        # строго за выбранный период, а не по всему файлу.
+        if start_ms is not None or end_ms is not None:
+            lo = start_ms if start_ms is not None else 0
+            hi = end_ms if end_ms is not None else 2**63 - 1
+            rows = [r for r in rows if lo <= int(r[0]) <= hi]
+        self._rows = rows
 
     @property
     def rows(self) -> list[tuple]:
