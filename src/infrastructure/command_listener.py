@@ -34,7 +34,7 @@ _DEDUP_KEY_TEMPLATE = "engine:commands:processed:{command_id}"
 class _Orchestrator(Protocol):
     async def start_strategy(self, bot_id: uuid.UUID) -> None: ...
     async def stop_strategy(self, bot_id: uuid.UUID) -> None: ...
-    async def update_strategy(self, bot_id: uuid.UUID) -> None: ...
+    async def update_strategy(self, bot_id: uuid.UUID, payload: dict[str, Any] | None = None) -> None: ...
 
 
 class CommandListener:
@@ -103,13 +103,16 @@ class CommandListener:
             logger.warning("command_invalid_bot_id", bot_id=bot_id_raw)
             return
 
-        handler = self._dispatch_table().get(channel)
+        handler, use_payload = self._dispatch_table().get(channel) or (None, False)
         if handler is None:
             logger.warning("command_unknown_channel", channel=channel)
             return
 
         try:
-            await handler(bot_id)
+            if use_payload:
+                await handler(bot_id, payload)
+            else:
+                await handler(bot_id)
         except Exception as exc:
             logger.exception(
                 "command_handler_failed",
@@ -124,11 +127,11 @@ class CommandListener:
         result = await self._redis.set(key, "1", ex=self._dedup_ttl_sec, nx=True)
         return bool(result)
 
-    def _dispatch_table(self) -> dict[str, Callable[[uuid.UUID], Awaitable[None]]]:
+    def _dispatch_table(self) -> dict[str, tuple[Callable[..., Awaitable[None]], bool]]:
         return {
-            COMMAND_START: self._orchestrator.start_strategy,
-            COMMAND_STOP: self._orchestrator.stop_strategy,
-            COMMAND_UPDATE: self._orchestrator.update_strategy,
+            COMMAND_START: (self._orchestrator.start_strategy, False),
+            COMMAND_STOP: (self._orchestrator.stop_strategy, False),
+            COMMAND_UPDATE: (self._orchestrator.update_strategy, True),
         }
 
 

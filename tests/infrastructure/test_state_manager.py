@@ -39,6 +39,7 @@ def _running(
     running.strategy.name = "SmaCross"
     running.adapter = AsyncMock()
     running.adapter.get_balance = AsyncMock(return_value=balances)
+    running.adapter.get_positions = AsyncMock(return_value=[])
     return running
 
 

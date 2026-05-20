@@ -14,7 +14,7 @@ from tenacity import (
 from domain.enums import OrderStatus, OrderType, Side, TimeFrame
 from domain.exceptions import OrderExecutionError
 from domain.interfaces import ExchangeAdapter
-from domain.models import Balance, Candle, Order
+from domain.models import Balance, Candle, Order, Position
 
 from .logging import get_logger
 
@@ -157,6 +157,13 @@ class CCXTExchangeAdapter(ExchangeAdapter):
         raw = await self._exchange.fetch_balance()
         return _to_balances(raw)
 
+    @_network_retry()  # type: ignore[untyped-decorator]
+    async def get_positions(self) -> list[Position]:
+        if not self._exchange.has.get("fetchPositions"):
+            return []
+        raw = await self._exchange.fetch_positions()
+        return [_to_position(r) for r in raw if r.get("contracts", 0) > 0 or r.get("size", 0) > 0]
+
 
 def _to_candle(symbol: str, timeframe: TimeFrame, row: list[Any]) -> Candle:
     ts_ms, o, h, l, c, v = row
@@ -240,3 +247,33 @@ def _to_balances(raw: Mapping[str, Any]) -> dict[str, Balance]:
             continue
         out[code] = Balance(currency=code, free=free, used=used, total=free + used)
     return out
+
+
+def _to_position(raw: Mapping[str, Any]) -> Position:
+    # Handle unified size representation (can be 'contracts' or 'size' depending on market)
+    raw_size = raw.get("contracts")
+    if raw_size is None or raw_size == 0:
+        raw_size = raw.get("size", 0)
+    
+    # Try different fields for pnl depending on exchange format
+    raw_pnl = raw.get("unrealizedPnl")
+    if raw_pnl is None:
+        raw_pnl = raw.get("pnl", 0)
+
+    side_val = raw.get("side")
+    if side_val == "short":
+        side = Side.SELL
+    elif side_val == "long":
+        side = Side.BUY
+    else:
+        # Fallback based on size sign if side string is not long/short
+        size_dec = Decimal(str(raw_size))
+        side = Side.BUY if size_dec >= 0 else Side.SELL
+
+    return Position(
+        symbol=str(raw.get("symbol", "")),
+        side=side,
+        entry_price=Decimal(str(raw.get("entryPrice", 0))),
+        size=abs(Decimal(str(raw_size))),
+        current_pnl=Decimal(str(raw_pnl))
+    )

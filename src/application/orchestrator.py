@@ -172,8 +172,8 @@ class EngineOrchestrator:
                 await running.adapter.close()
             logger.info("strategy stopped: bot_id=%s", bot_id)
 
-    async def update_strategy(self, bot_id: uuid.UUID) -> None:
-        """Phase 1: update = stop + start с актуальным конфигом из БД."""
+    async def update_strategy(self, bot_id: uuid.UUID, payload: dict[str, Any] | None = None) -> None:
+        """Restart strategy with latest config from DB. Payload (params) is already persisted."""
         if bot_id in self._running:
             await self.stop_strategy(bot_id)
         await self.start_strategy(bot_id)

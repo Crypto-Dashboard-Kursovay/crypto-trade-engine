@@ -52,6 +52,7 @@ def _adapter() -> AsyncMock:
     a.fetch_ohlcv = AsyncMock(return_value=[])
     a.create_order = AsyncMock()
     a.get_balance = AsyncMock(return_value={})
+    a.get_positions = AsyncMock(return_value=[])
     a.close = AsyncMock()
     return a
 

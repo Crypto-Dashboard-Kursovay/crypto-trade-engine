@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any
 
 from .enums import OrderType, Side, TimeFrame
-from .models import Balance, Candle, Order, Signal
+from .models import Balance, Candle, Order, Position, Signal
 
 
 class ExchangeAdapter(ABC):
@@ -31,6 +31,9 @@ class ExchangeAdapter(ABC):
 
     @abstractmethod
     async def get_balance(self) -> Mapping[str, Balance]: ...
+
+    @abstractmethod
+    async def get_positions(self) -> list[Position]: ...
 
     async def close(self) -> None:
         """Close any held resources (network sessions etc.). Default: no-op."""

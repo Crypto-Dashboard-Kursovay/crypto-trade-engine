@@ -77,12 +77,13 @@ async def test_dispatches_update_command(
 ) -> None:
     bot_id = uuid.uuid4()
     cmd_id = uuid.uuid4()
+    payload = {"command_id": str(cmd_id), "bot_id": str(bot_id)}
     await _run_listener(
         redis,
         orchestrator,
-        [(COMMAND_UPDATE, {"command_id": str(cmd_id), "bot_id": str(bot_id)})],
+        [(COMMAND_UPDATE, payload)],
     )
-    orchestrator.update_strategy.assert_awaited_once_with(bot_id)
+    orchestrator.update_strategy.assert_awaited_once_with(bot_id, payload)
 
 
 async def test_duplicate_command_id_is_skipped(

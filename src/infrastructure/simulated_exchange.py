@@ -22,7 +22,7 @@ from decimal import Decimal
 from domain.enums import OrderStatus, OrderType, Side, TimeFrame
 from domain.exceptions import OrderExecutionError
 from domain.interfaces import ExchangeAdapter
-from domain.models import Balance, Candle, Order
+from domain.models import Balance, Candle, Order, Position
 
 
 def _balance(currency: str, free: Decimal) -> Balance:
@@ -116,6 +116,9 @@ class SimulatedExchangeAdapter(ExchangeAdapter):
 
     async def get_balance(self) -> Mapping[str, Balance]:
         return dict(self._balance)
+
+    async def get_positions(self) -> list[Position]:
+        return []
 
     async def close(self) -> None:
         return None

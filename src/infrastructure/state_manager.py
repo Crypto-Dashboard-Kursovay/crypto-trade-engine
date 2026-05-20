@@ -21,9 +21,9 @@ from typing import Any, Protocol
 
 from redis.asyncio import Redis
 
-from application.events import BALANCE_UPDATE, ENGINE_STATUS
+from application.events import BALANCE_UPDATE, ENGINE_STATUS, POSITIONS_UPDATE
 from domain.interfaces import EventBus
-from domain.models import Balance
+from domain.models import Balance, Position
 
 from .logging import get_logger
 
@@ -109,6 +109,24 @@ class StateManager:
                         bot_id=str(running.bot_id),
                         error=str(exc),
                     )
+                try:
+                    positions = await running.adapter.get_positions()
+                    await self._event_bus.publish(
+                        POSITIONS_UPDATE,
+                        {
+                            "bot_id": str(running.bot_id),
+                            "credential_id": str(running.credential_id),
+                            "positions": _serialize_positions(positions),
+                            "timestamp": _utc_iso(),
+                        },
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "positions_poll_failed",
+                        bot_id=str(running.bot_id),
+                        error=str(exc),
+                    )
+
             await self._sleep_or_stop(self._balance_interval)
 
     async def _snapshot_loop(self) -> None:
@@ -153,6 +171,19 @@ def _serialize_balances(raw: Mapping[str, Balance]) -> dict[str, dict[str, str]]
         }
         for currency, bal in raw.items()
     }
+
+
+def _serialize_positions(raw: list[Position]) -> list[dict[str, str]]:
+    return [
+        {
+            "symbol": pos.symbol,
+            "side": pos.side.value,
+            "entry_price": str(pos.entry_price),
+            "size": str(pos.size),
+            "current_pnl": str(pos.current_pnl),
+        }
+        for pos in raw
+    ]
 
 
 def _utc_iso() -> str:

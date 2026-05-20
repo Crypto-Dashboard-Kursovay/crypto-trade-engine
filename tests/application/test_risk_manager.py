@@ -29,6 +29,7 @@ def _balances(
 def adapter() -> AsyncMock:
     a = AsyncMock(spec=ExchangeAdapter)
     a.get_balance.return_value = _balances()
+    a.get_positions.return_value = []
     return a
 
 
