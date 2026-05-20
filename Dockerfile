@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,7 +10,7 @@ COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip && \
     pip wheel --no-cache-dir --wheel-dir /build/wheels .
 
-FROM python:3.11-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
