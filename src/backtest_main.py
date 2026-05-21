@@ -34,8 +34,15 @@ from pathlib import Path
 from typing import Any
 
 # Логи backtest_main валим в stderr — stdout полностью для JSON-результата.
+# structlog по умолчанию пишет в stdout через PrintLoggerFactory —
+# переопределяем до того как любой модуль сделает get_logger().
 import logging
 logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+
+import structlog
+structlog.configure(
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+)
 
 from application.backtest_runner import BacktestRunner
 from application.order_executor import OrderExecutor
@@ -61,19 +68,64 @@ def _load_config(path: Path) -> dict[str, Any]:
 
 def _parquet_range(path: Path) -> tuple[int, int] | None:
     """Возвращает (min_ts_ms, max_ts_ms) кэша или None, если файла/данных нет."""
-    try:
-        import pandas as pd
-    except ImportError:  # pragma: no cover
-        return None
-    if not path.exists():
+    actual = _find_data_file(path)
+    if actual is None:
         return None
     try:
-        df = pd.read_parquet(path)
-        if "timestamp" not in df.columns or df.empty:
+        rows = _load_data_file(actual)
+        if not rows:
             return None
-        return int(df["timestamp"].min()), int(df["timestamp"].max())
+        timestamps = [int(r[0]) for r in rows]
+        return min(timestamps), max(timestamps)
     except Exception:
         return None
+
+
+def _find_data_file(path: Path) -> Path | None:
+    """Ищет parquet или CSV-файл по базовому пути (без суффикса)."""
+    base = path.with_suffix("")
+    parquet = base.with_suffix(".parquet")
+    csv_file = base.with_suffix(".csv")
+    if parquet.exists():
+        return parquet
+    if csv_file.exists():
+        return csv_file
+    return None
+
+
+def _load_data_file(path: Path) -> list[tuple]:
+    """Загружает все строки из parquet или CSV в память."""
+    try:
+        import pandas as pd
+    except ImportError:
+        pd = None
+
+    if path.suffix == ".parquet" and pd is not None:
+        df = pd.read_parquet(path)
+        cols = ["timestamp", "open", "high", "low", "close", "volume"]
+        df = df[cols].sort_values("timestamp")
+        return [tuple(row) for row in df.itertuples(index=False, name=None)]
+
+    if path.suffix == ".csv":
+        import csv
+        with path.open(newline="") as fh:
+            reader = csv.reader(fh)
+            header = next(reader, None)
+            if header is None:
+                return []
+            rows = [tuple(r) for r in reader]
+        rows.sort(key=lambda r: int(r[0]))
+        return rows
+
+    return []
+
+
+def _resolve_actual_path(parquet_path: Path) -> Path:
+    """Возвращает реальный путь к файлу данных (parquet или CSV)."""
+    found = _find_data_file(parquet_path)
+    if found is not None:
+        return found
+    return parquet_path  # вернём канонический паркет-путь
 
 
 async def _ensure_market_data(
@@ -85,20 +137,21 @@ async def _ensure_market_data(
     start_ms: int | None,
     end_ms: int | None,
 ) -> CSVMarketDataProvider:
-    """Гибрид: parquet-кэш, иначе докачиваем с реальной биржи и кэшируем.
+    """Гибрид: parquet/CSV-кэш, иначе докачиваем с реальной биржи и кэшируем.
 
     Кэш считается покрывающим диапазон, если его свечи начинаются не позже start_ms
     и заканчиваются не раньше чем за один таймфрейм до end_ms.
     """
     tf_str = str(timeframe)
     covered = False
-    if start_ms is not None and end_ms is not None:
+    actual_path = _find_data_file(parquet_path)
+    if actual_path is not None and start_ms is not None and end_ms is not None:
         rng = _parquet_range(parquet_path)
         if rng is not None:
             file_min, file_max = rng
             step = timeframe_ms(tf_str)
             covered = file_min <= start_ms and file_max >= end_ms - step
-    elif parquet_path.exists():
+    elif actual_path is not None:
         covered = True
 
     if not covered:
@@ -113,9 +166,12 @@ async def _ensure_market_data(
                 f"{tf_str} в выбранном диапазоне"
             )
         save_parquet(parquet_path, rows)
+        actual_path = _find_data_file(parquet_path)
+        if actual_path is None:
+            actual_path = parquet_path
 
     provider = CSVMarketDataProvider(
-        parquet_path, symbol, timeframe, start_ms=start_ms, end_ms=end_ms
+        actual_path, symbol, timeframe, start_ms=start_ms, end_ms=end_ms
     )
     if not provider.rows:
         raise ValueError(

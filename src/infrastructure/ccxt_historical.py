@@ -85,15 +85,17 @@ async def fetch_ohlcv_rows(
 
 
 def save_parquet(path: Path | str, rows: list[tuple]) -> None:
-    """Пишет/мёрджит свечи в parquet-кэш (dedup по timestamp, сортировка по возр.)."""
+    """Пишет/мёрджит свечи в parquet-кэш (dedup по timestamp, сортировка по возр.).
+
+    Если pandas/pyarrow не установлены — падает в CSV-формат.
+    """
+    path = Path(path)
     try:
         import pandas as pd
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "pandas/pyarrow not installed — install with `pip install -e .[backtest]`"
-        ) from exc
+    except ImportError:
+        _save_csv(path.with_suffix(".csv"), rows)
+        return
 
-    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = ["timestamp", "open", "high", "low", "close", "volume"]
     df_new = pd.DataFrame(rows, columns=cols)
@@ -116,6 +118,31 @@ def save_parquet(path: Path | str, rows: list[tuple]) -> None:
     df_new.sort_values("timestamp", inplace=True)
     df_new.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
     df_new.to_parquet(path, index=False)
+
+
+def _save_csv(path: Path, rows: list[tuple]) -> None:
+    """Сохраняет свечи в CSV-формат (fallback, когда pandas/pyarrow нет)."""
+    import csv
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if path.exists() else "w"
+    with path.open(mode, newline="") as fh:
+        writer = csv.writer(fh)
+        if mode == "w":
+            writer.writerow(["timestamp", "open", "high", "low", "close", "volume"])
+        existing: set[int] = set()
+        if path.exists() and mode == "a":
+            from io import StringIO
+            with path.open("r", newline="") as rf:
+                reader = csv.reader(rf)
+                next(reader, None)
+                for r in reader:
+                    if r:
+                        existing.add(int(r[0]))
+        for row in rows:
+            if int(row[0]) not in existing:
+                writer.writerow(row)
+                existing.add(int(row[0]))
 
 
 __all__ = ["fetch_ohlcv_rows", "save_parquet", "timeframe_ms"]
