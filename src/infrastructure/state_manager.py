@@ -109,6 +109,21 @@ class StateManager:
                         bot_id=str(running.bot_id),
                         error=str(exc),
                     )
+                    # Сохраняем ошибку в Redis для диагностики бэка
+                    try:
+                        await self._redis.set(
+                            "engine:last_balance_error",
+                            json.dumps({
+                                "bot_id": str(running.bot_id),
+                                "credential_id": str(running.credential_id),
+                                "error": str(exc),
+                                "type": type(exc).__name__,
+                                "timestamp": _utc_iso(),
+                            }),
+                            ex=300,
+                        )
+                    except Exception:
+                        pass
                 try:
                     positions = await running.adapter.get_positions()
                     await self._event_bus.publish(
