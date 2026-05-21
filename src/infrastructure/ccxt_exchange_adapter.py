@@ -91,6 +91,21 @@ class CCXTExchangeAdapter(ExchangeAdapter):
             self._exchange = exchange_class(config)
             if testnet:
                 self._exchange.set_sandbox_mode(True)
+                # set_sandbox_mode может переключить fetch_balance на futures URL.
+                # Принудительно задаём spot testnet напрямую.
+                if exchange_name == "binance":
+                    api_url = "https://testnet.binance.vision"
+                    if "api" in self._exchange.urls:
+                        self._exchange.urls["api"] = {
+                            "public": f"{api_url}/api/v3",
+                            "private": f"{api_url}/api/v3",
+                        }
+                    # Сбрасываем futures URL — иначе fetch_balance/load_markets лезут
+                    # на testnet.binancefuture.com и тайматят
+                    for key in ("fapiPublic", "fapiPrivate", "dapiPublic", "dapiPrivate"):
+                        if key in self._exchange.urls:
+                            del self._exchange.urls[key]
+                    self._exchange.options["defaultType"] = "spot"
 
     @property
     def native(self) -> Any:
