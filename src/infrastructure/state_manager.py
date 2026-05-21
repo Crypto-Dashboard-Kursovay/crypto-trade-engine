@@ -91,15 +91,20 @@ class StateManager:
 
     async def _balance_loop(self) -> None:
         while not self._stopped.is_set():
+            running_count = 0
+            balance_count = 0
             for running in self._orchestrator.iter_running():
+                running_count += 1
                 try:
                     raw_balances = await running.adapter.get_balance()
+                    serialized = _serialize_balances(raw_balances)
+                    balance_count = len(serialized)
                     await self._event_bus.publish(
                         BALANCE_UPDATE,
                         {
                             "bot_id": str(running.bot_id),
                             "credential_id": str(running.credential_id),
-                            "balances": _serialize_balances(raw_balances),
+                            "balances": serialized,
                             "timestamp": _utc_iso(),
                         },
                     )
@@ -109,7 +114,6 @@ class StateManager:
                         bot_id=str(running.bot_id),
                         error=str(exc),
                     )
-                    # Сохраняем ошибку в Redis для диагностики бэка
                     try:
                         await self._redis.set(
                             "engine:last_balance_error",
@@ -141,6 +145,20 @@ class StateManager:
                         bot_id=str(running.bot_id),
                         error=str(exc),
                     )
+
+            # Сохраняем диагностику последнего полла в Redis
+            try:
+                await self._redis.set(
+                    "engine:last_balance_success",
+                    json.dumps({
+                        "running_bots": running_count,
+                        "currencies_published": balance_count,
+                        "timestamp": _utc_iso(),
+                    }),
+                    ex=120,
+                )
+            except Exception:
+                pass
 
             await self._sleep_or_stop(self._balance_interval)
 
