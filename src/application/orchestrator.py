@@ -26,6 +26,7 @@ from typing import Any, Protocol
 from domain.interfaces import EventBus, ExchangeAdapter, MarketDataProvider, Strategy
 from domain.position_manager import PositionManager
 
+from .events import STRATEGY_ERROR
 from .order_executor import OrderExecutor
 from .risk_manager import RiskManager
 from .strategy_runner import StrategyRunner
@@ -114,85 +115,100 @@ class EngineOrchestrator:
                 logger.info("start ignored, bot already running: %s", bot_id)
                 return
 
-            bot = await self._bot_repo.get(bot_id)
-            if bot is None:
-                raise OrchestratorError(f"Bot {bot_id} not found in DB")
-
-            cred = await self._credential_repo.get_decrypted(bot.credential_id)
-            if cred is None:
-                raise OrchestratorError(
-                    f"Credential {bot.credential_id} not found for bot {bot_id}"
-                )
-
-            strategy_cls = self._registry.resolve(bot.strategy_class)
-            adapter = self._exchange_factory(cred)
-            market_data = self._market_data_factory(adapter)
-
-            strategy = strategy_cls(  # type: ignore[call-arg]
-                symbol=bot.symbol,
-                timeframe=bot.timeframe,
-                **bot.params,
-            )
-
-            await _warmup_strategy(strategy, adapter, bot.symbol, bot.timeframe)
-
-            # Build position manager with optional stop-loss / take-profit defaults
-            # extracted from strategy params.
-            sl = _decimal_or_none(bot.params.get("stop_loss_pct"))
-            tp = _decimal_or_none(bot.params.get("take_profit_pct"))
-            position_manager = PositionManager(
-                strategy_name=strategy.name,
-                symbol=bot.symbol,
-                default_stop_loss_pct=sl,
-                default_take_profit_pct=tp,
-            )
-
-            # Reconcile with exchange — load existing positions so stop-loss /
-            # take-profit works from the correct entry point after restart.
             try:
-                exchange_positions = await adapter.get_positions()
-                own_positions = [p for p in exchange_positions if p.symbol == bot.symbol]
-                if own_positions:
-                    position_manager.reconcile(own_positions)
+                await self._start_impl(bot_id)
             except Exception as exc:
-                logger.warning(
-                    "position_reconcile_skipped",
-                    bot_id=str(bot_id),
-                    error=str(exc),
+                logger.exception("start_strategy_failed bot_id=%s", str(bot_id))
+                await self._event_bus.publish(
+                    STRATEGY_ERROR,
+                    {
+                        "bot_id": str(bot_id),
+                        "strategy": getattr(exc, "strategy_name", "unknown"),
+                        "kind": "startup_failed",
+                        "message": str(exc),
+                    },
                 )
+                raise
 
-            risk = RiskManager(
-                adapter=adapter,
-                max_position_pct=self._risk_config.max_position_pct,
-                min_lot=self._risk_config.min_lot,
-                quote_currency=self._risk_config.quote_currency,
-            )
-            executor = OrderExecutor(adapter, self._event_bus, bot_id=bot_id)
-            runner = StrategyRunner(
-                strategy=strategy,
-                market_data=market_data,
-                risk=risk,
-                executor=executor,
-                event_bus=self._event_bus,
-                bot_id=bot_id,
-                position_manager=position_manager,
+    async def _start_impl(self, bot_id: uuid.UUID) -> None:
+        bot = await self._bot_repo.get(bot_id)
+        if bot is None:
+            raise OrchestratorError(f"Bot {bot_id} not found in DB")
+
+        cred = await self._credential_repo.get_decrypted(bot.credential_id)
+        if cred is None:
+            raise OrchestratorError(
+                f"Credential {bot.credential_id} not found for bot {bot_id}"
             )
 
-            task = asyncio.create_task(runner.run(), name=f"bot-{bot_id}")
-            self._running[bot_id] = RunningStrategy(
-                bot_id=bot_id,
-                credential_id=bot.credential_id,
-                symbol=bot.symbol,
-                task=task,
-                adapter=adapter,
-                strategy=strategy,
+        strategy_cls = self._registry.resolve(bot.strategy_class)
+        adapter = self._exchange_factory(cred)
+        market_data = self._market_data_factory(adapter)
+
+        strategy = strategy_cls(  # type: ignore[call-arg]
+            symbol=bot.symbol,
+            timeframe=bot.timeframe,
+            **bot.params,
+        )
+
+        await _warmup_strategy(strategy, adapter, bot.symbol, bot.timeframe)
+
+        # Build position manager with optional stop-loss / take-profit defaults
+        # extracted from strategy params.
+        sl = _decimal_or_none(bot.params.get("stop_loss_pct"))
+        tp = _decimal_or_none(bot.params.get("take_profit_pct"))
+        position_manager = PositionManager(
+            strategy_name=strategy.name,
+            symbol=bot.symbol,
+            default_stop_loss_pct=sl,
+            default_take_profit_pct=tp,
+        )
+
+        # Reconcile with exchange — load existing positions so stop-loss /
+        # take-profit works from the correct entry point after restart.
+        try:
+            exchange_positions = await adapter.get_positions()
+            own_positions = [p for p in exchange_positions if p.symbol == bot.symbol]
+            if own_positions:
+                position_manager.reconcile(own_positions)
+        except Exception as exc:
+            logger.warning(
+                "position_reconcile_skipped bot_id=%s err=%s",
+                str(bot_id), exc,
             )
-            logger.info(
-                "strategy started: bot_id=%s strategy=%s symbol=%s",
-                bot_id,
-                bot.strategy_class,
-                bot.symbol,
-            )
+
+        risk = RiskManager(
+            adapter=adapter,
+            max_position_pct=self._risk_config.max_position_pct,
+            min_lot=self._risk_config.min_lot,
+            quote_currency=self._risk_config.quote_currency,
+        )
+        executor = OrderExecutor(adapter, self._event_bus, bot_id=bot_id)
+        runner = StrategyRunner(
+            strategy=strategy,
+            market_data=market_data,
+            risk=risk,
+            executor=executor,
+            event_bus=self._event_bus,
+            bot_id=bot_id,
+            position_manager=position_manager,
+        )
+
+        task = asyncio.create_task(runner.run(), name=f"bot-{bot_id}")
+        self._running[bot_id] = RunningStrategy(
+            bot_id=bot_id,
+            credential_id=bot.credential_id,
+            symbol=bot.symbol,
+            task=task,
+            adapter=adapter,
+            strategy=strategy,
+        )
+        logger.info(
+            "strategy started: bot_id=%s strategy=%s symbol=%s",
+            bot_id,
+            bot.strategy_class,
+            bot.symbol,
+        )
 
     async def stop_strategy(self, bot_id: uuid.UUID) -> None:
         async with self._lock:
