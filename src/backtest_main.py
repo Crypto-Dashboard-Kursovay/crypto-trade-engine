@@ -247,7 +247,17 @@ async def _run(config: dict[str, Any]) -> dict[str, Any]:
         equity_snapshot_every=snapshot_every,
     )
     result = await runner.run()
-    return result.to_json()
+    result_json = result.to_json()
+    # Добавляем диагностику: сколько свечей, какой диапазон дат
+    rows = market_data.rows
+    result_json["_candle_count"] = len(rows)
+    result_json["_candle_range"] = {
+        "from_ms": int(rows[0][0]) if rows else None,
+        "to_ms": int(rows[-1][0]) if rows else None,
+        "requested_from_ms": start_ms,
+        "requested_to_ms": end_ms,
+    }
+    return result_json
 
 
 def main(argv: list[str] | None = None) -> int:
