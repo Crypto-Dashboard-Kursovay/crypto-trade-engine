@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 FROM python:3.14-slim AS runtime
 
+ARG APP_UID=1000
+ARG APP_GID=1000
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
@@ -19,7 +22,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq5 && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd --create-home --uid 1000 app
+    groupadd --gid ${APP_GID} app 2>/dev/null || true && \
+    useradd --create-home --uid ${APP_UID} --gid ${APP_GID} app
 
 WORKDIR /app
 COPY --from=builder /build/wheels /wheels
