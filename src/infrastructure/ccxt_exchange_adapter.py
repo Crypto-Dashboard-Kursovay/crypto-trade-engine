@@ -84,6 +84,7 @@ class CCXTExchangeAdapter(ExchangeAdapter):
                 "apiKey": api_key,
                 "secret": api_secret,
                 "enableRateLimit": True,
+                "options": {"defaultType": "spot"},
             }
             if passphrase:
                 config["password"] = passphrase

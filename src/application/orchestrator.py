@@ -26,7 +26,7 @@ from typing import Any, Protocol
 from domain.interfaces import EventBus, ExchangeAdapter, MarketDataProvider, Strategy
 from domain.position_manager import PositionManager
 
-from .events import STRATEGY_ERROR
+from .events import ENGINE_LOG, STRATEGY_ERROR
 from .order_executor import OrderExecutor
 from .risk_manager import RiskManager
 from .strategy_runner import StrategyRunner
@@ -41,6 +41,11 @@ def _decimal_or_none(value: Any) -> Decimal | None:
         return Decimal(str(value))
     except Exception:
         return None
+
+
+def _utc_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 class _BotRepository(Protocol):
@@ -119,6 +124,15 @@ class EngineOrchestrator:
                 await self._start_impl(bot_id)
             except Exception as exc:
                 logger.exception("start_strategy_failed bot_id=%s", str(bot_id))
+                await self._event_bus.publish(
+                    ENGINE_LOG,
+                    {
+                        "kind": "startup_failed",
+                        "bot_id": str(bot_id),
+                        "message": f"Strategy start failed: {exc}",
+                        "timestamp": _utc_now(),
+                    },
+                )
                 await self._event_bus.publish(
                     STRATEGY_ERROR,
                     {
@@ -208,6 +222,15 @@ class EngineOrchestrator:
             bot_id,
             bot.strategy_class,
             bot.symbol,
+        )
+        await self._event_bus.publish(
+            ENGINE_LOG,
+            {
+                "kind": "strategy_started",
+                "bot_id": str(bot_id),
+                "message": f"{bot.strategy_class} started on {bot.symbol} ({bot.timeframe})",
+                "timestamp": _utc_now(),
+            },
         )
 
     async def stop_strategy(self, bot_id: uuid.UUID) -> None:

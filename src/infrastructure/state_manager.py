@@ -21,7 +21,7 @@ from typing import Any, Protocol
 
 from redis.asyncio import Redis
 
-from application.events import BALANCE_UPDATE, ENGINE_STATUS, POSITIONS_UPDATE
+from application.events import BALANCE_UPDATE, ENGINE_LOG, ENGINE_STATUS, POSITIONS_UPDATE
 from domain.interfaces import EventBus
 from domain.models import Balance, Position
 
@@ -114,6 +114,16 @@ class StateManager:
                         bot_id=str(running.bot_id),
                         error=str(exc),
                     )
+                    await self._event_bus.publish(
+                        ENGINE_LOG,
+                        {
+                            "kind": "balance_poll_failed",
+                            "bot_id": str(running.bot_id),
+                            "credential_id": str(running.credential_id),
+                            "message": f"Balance fetch failed: {exc}",
+                            "timestamp": _utc_iso(),
+                        },
+                    )
                     try:
                         await self._redis.set(
                             "engine:last_balance_error",
@@ -157,6 +167,24 @@ class StateManager:
                     }),
                     ex=120,
                 )
+                if running_count > 0:
+                    await self._event_bus.publish(
+                        ENGINE_LOG,
+                        {
+                            "kind": "balance_poll",
+                            "message": f"Balance poll: {running_count} bot(s), {balance_count} currencies",
+                            "timestamp": _utc_iso(),
+                        },
+                    )
+                else:
+                    await self._event_bus.publish(
+                        ENGINE_LOG,
+                        {
+                            "kind": "balance_poll",
+                            "message": "Balance poll: no running bots to query",
+                            "timestamp": _utc_iso(),
+                        },
+                    )
             except Exception:
                 pass
 
