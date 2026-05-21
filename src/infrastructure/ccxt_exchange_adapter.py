@@ -20,7 +20,7 @@ from .logging import get_logger
 
 logger = get_logger(__name__)
 
-SUPPORTED_EXCHANGES: frozenset[str] = frozenset({"binance", "bybit", "okx", "mexc"})
+_SUPPORTED_EXCHANGES: frozenset[str] = frozenset({"binance", "bybit", "okx", "mexc"})
 
 # OKX и Coinbase Pro требуют третий секрет — passphrase. Используется только при
 # построении ccxt-конфига (ключ "password" в ccxt).
@@ -51,6 +51,43 @@ def _network_retry() -> Any:
     )
 
 
+def _apply_binance_testnet_urls(exchange: Any) -> None:
+    """Ручная настройка Binance spot testnet URL без set_sandbox_mode.
+
+    set_sandbox_mode(True) в разных версиях ccxt создаёт futures/delivery
+    testnet URL, на которые load_markets лезет автоматически. С сервера эти
+    эндпоинты недоступны → RequestTimeout → падает и fetch_balance, и всё
+    остальное. Вручную задаём только spot, минуя механизм sandbox.
+
+    Ключевое: exchange.has['fapiPublic'] = False отключает загрузку
+    futures-рынков в load_markets, а load_all_markets = False говорит ccxt
+    «грузи только spot».
+    """
+    base_rest = "https://testnet.binance.vision/api/v3"
+    base_ws = "wss://testnet.binance.vision/ws"
+
+    # --- Spot URLs (только они и нужны) ---
+    exchange.urls["api"] = {"public": base_rest, "private": base_rest}
+    exchange.urls["ws"] = {"public": base_ws, "private": base_ws}
+
+    # --- Убираем ALL не-spot URL: futures, delivery, margin ---
+    for key in (
+        "fapiPublic", "fapiPrivate", "dapiPublic", "dapiPrivate",
+        "papiPublic", "papiPrivate", "eapiPublic", "eapiPrivate",
+    ):
+        exchange.urls.pop(key, None)
+        # has-флаги запрещают ccxt даже пытаться грузить эти типы рынков
+        try:
+            exchange.has[key] = False
+        except Exception:
+            pass
+
+    # --- Опции: только spot, без автозагрузки всех market types ---
+    exchange.options["defaultType"] = "spot"
+    exchange.options["fetchBalance"] = "spot"
+    exchange.load_all_markets = False
+
+
 class CCXTExchangeAdapter(ExchangeAdapter):
     """Адаптер биржи поверх ccxt.pro. Поддерживаются Binance, Bybit, OKX, MEXC.
 
@@ -68,10 +105,10 @@ class CCXTExchangeAdapter(ExchangeAdapter):
         passphrase: str | None = None,
         exchange: Any | None = None,
     ) -> None:
-        if exchange_name not in SUPPORTED_EXCHANGES:
+        if exchange_name not in _SUPPORTED_EXCHANGES:
             raise ValueError(
                 f"Unsupported exchange '{exchange_name}'. "
-                f"Supported: {sorted(SUPPORTED_EXCHANGES)}"
+                f"Supported: {sorted(_SUPPORTED_EXCHANGES)}"
             )
         if exchange_name in _PASSPHRASE_EXCHANGES and not passphrase:
             raise ValueError(f"{exchange_name} requires a passphrase")
@@ -90,22 +127,10 @@ class CCXTExchangeAdapter(ExchangeAdapter):
                 config["password"] = passphrase
             self._exchange = exchange_class(config)
             if testnet:
-                self._exchange.set_sandbox_mode(True)
-                # set_sandbox_mode может переключить fetch_balance на futures URL.
-                # Принудительно задаём spot testnet напрямую.
                 if exchange_name == "binance":
-                    api_url = "https://testnet.binance.vision"
-                    if "api" in self._exchange.urls:
-                        self._exchange.urls["api"] = {
-                            "public": f"{api_url}/api/v3",
-                            "private": f"{api_url}/api/v3",
-                        }
-                    # Сбрасываем futures URL — иначе fetch_balance/load_markets лезут
-                    # на testnet.binancefuture.com и тайматят
-                    for key in ("fapiPublic", "fapiPrivate", "dapiPublic", "dapiPrivate"):
-                        if key in self._exchange.urls:
-                            del self._exchange.urls[key]
-                    self._exchange.options["defaultType"] = "spot"
+                    _apply_binance_testnet_urls(self._exchange)
+                else:
+                    self._exchange.set_sandbox_mode(True)
 
     @property
     def native(self) -> Any:
