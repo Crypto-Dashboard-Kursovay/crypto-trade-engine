@@ -33,6 +33,6 @@ USER app
 # Просто сверяемся, что python процесс не упал — детальный мониторинг engine.status
 # из бэка (Phase 3.4).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+    CMD python -m healthcheck || exit 1
 
 CMD ["trade-engine"]
