@@ -84,6 +84,9 @@ def _apply_binance_testnet_urls(exchange: Any) -> None:
     # Загружаем только spot-рынки: futures testnet (testnet.binancefuture.com)
     # deprecated, в demo-режиме вызов fapiPublicGetExchangeInfo упадет.
     exchange.options["fetchMarkets"] = {"types": ["spot"]}
+    # Spot-биржа не имеет позиций в смысле futures; fetchPositions дёргает
+    # fapiPrivateGetAccount → deprecated sandbox URL → NotSupported.
+    exchange.has["fetchPositions"] = False
 
 
 class CCXTExchangeAdapter(ExchangeAdapter):
