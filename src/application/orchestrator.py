@@ -165,7 +165,21 @@ class EngineOrchestrator:
             **bot.params,
         )
 
-        await _warmup_strategy(strategy, adapter, bot.symbol, bot.timeframe)
+        try:
+            await _warmup_strategy(strategy, adapter, bot.symbol, bot.timeframe)
+        except Exception as exc:
+            logger.warning(
+                "warmup_skipped bot_id=%s reason=%s", str(bot_id), exc
+            )
+            await self._event_bus.publish(
+                ENGINE_LOG,
+                {
+                    "kind": "warmup_skipped",
+                    "bot_id": str(bot_id),
+                    "message": f"Warmup skipped (exchange error): {exc}",
+                    "timestamp": _utc_now(),
+                },
+            )
 
         # Build position manager with optional stop-loss / take-profit defaults
         # extracted from strategy params.

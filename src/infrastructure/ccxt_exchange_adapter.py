@@ -20,7 +20,7 @@ from .logging import get_logger
 
 logger = get_logger(__name__)
 
-_SUPPORTED_EXCHANGES: frozenset[str] = frozenset({"binance", "bybit", "okx", "mexc"})
+SUPPORTED_EXCHANGES: frozenset[str] = frozenset({"binance", "bybit", "okx", "mexc"})
 
 # OKX и Coinbase Pro требуют третий секрет — passphrase. Используется только при
 # построении ccxt-конфига (ключ "password" в ccxt).
@@ -52,40 +52,38 @@ def _network_retry() -> Any:
 
 
 def _apply_binance_testnet_urls(exchange: Any) -> None:
-    """Ручная настройка Binance spot testnet URL без set_sandbox_mode.
-
-    set_sandbox_mode(True) в разных версиях ccxt создаёт futures/delivery
-    testnet URL, на которые load_markets лезет автоматически. С сервера эти
-    эндпоинты недоступны → RequestTimeout → падает и fetch_balance, и всё
-    остальное. Вручную задаём только spot, минуя механизм sandbox.
-
-    Ключевое: exchange.has['fapiPublic'] = False отключает загрузку
-    futures-рынков в load_markets, а load_all_markets = False говорит ccxt
-    «грузи только spot».
-    """
+    """Настройка Binance spot testnet."""
     base_rest = "https://testnet.binance.vision/api/v3"
     base_ws = "wss://testnet.binance.vision/ws"
 
-    # --- Spot URLs (только они и нужны) ---
-    exchange.urls["api"] = {"public": base_rest, "private": base_rest}
+    exchange.set_sandbox_mode(True)
+    # set_sandbox_mode копирует urls['test'] -> urls['api'] (fapi/dapi/spot —
+    # есть; sapi/eapi/papi — нет). urls['apiBackup'] сохраняется.
+
+    # Точечно поправляем spot URLs — НЕ заменяем весь urls['api'],
+    # иначе ломаются fapiPublic/dapiPublic/... ключи, которые нужны sign().
+    exchange.urls["api"]["public"] = base_rest
+    exchange.urls["api"]["private"] = base_rest
     exchange.urls["ws"] = {"public": base_ws, "private": base_ws}
 
-    # --- Убираем ALL не-spot URL: futures, delivery, margin ---
-    for key in (
-        "fapiPublic", "fapiPrivate", "dapiPublic", "dapiPrivate",
-        "papiPublic", "papiPrivate", "eapiPublic", "eapiPrivate",
-    ):
-        exchange.urls.pop(key, None)
-        # has-флаги запрещают ccxt даже пытаться грузить эти типы рынков
-        try:
-            exchange.has[key] = False
-        except Exception:
-            pass
+    # sapi (margin/lending/staking) недоступны на Spot Testnet — убираем
+    # из urls['api'], иначе fetch_currencies дернет sapiGetCapitalConfigGetall.
+    for sapi_key in ("sapi", "sapiV2", "sapiV3", "sapiV4"):
+        exchange.urls["api"].pop(sapi_key, None)
+    exchange.has["sapiPublic"] = False
+    exchange.has["sapiPrivate"] = False
 
-    # --- Опции: только spot, без автозагрузки всех market types ---
+    # fetch_currencies игнорит has-флаги — monkey-patch в no-op на всякий случай.
+    async def _fetch_currencies_noop(_params: Any = None) -> dict[str, Any]:
+        return {}
+    exchange.fetch_currencies = _fetch_currencies_noop  # type: ignore[assignment]
+
     exchange.options["defaultType"] = "spot"
     exchange.options["fetchBalance"] = "spot"
-    exchange.load_all_markets = False
+    exchange.options["load_all_markets"] = False
+    # Загружаем только spot-рынки: futures testnet (testnet.binancefuture.com)
+    # deprecated, в demo-режиме вызов fapiPublicGetExchangeInfo упадет.
+    exchange.options["fetchMarkets"] = {"types": ["spot"]}
 
 
 class CCXTExchangeAdapter(ExchangeAdapter):
@@ -105,10 +103,10 @@ class CCXTExchangeAdapter(ExchangeAdapter):
         passphrase: str | None = None,
         exchange: Any | None = None,
     ) -> None:
-        if exchange_name not in _SUPPORTED_EXCHANGES:
+        if exchange_name not in SUPPORTED_EXCHANGES:
             raise ValueError(
                 f"Unsupported exchange '{exchange_name}'. "
-                f"Supported: {sorted(_SUPPORTED_EXCHANGES)}"
+                f"Supported: {sorted(SUPPORTED_EXCHANGES)}"
             )
         if exchange_name in _PASSPHRASE_EXCHANGES and not passphrase:
             raise ValueError(f"{exchange_name} requires a passphrase")

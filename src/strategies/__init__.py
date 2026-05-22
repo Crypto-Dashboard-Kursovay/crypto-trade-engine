@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from domain.interfaces import Strategy
 
+from .adaptive_rsi import AdaptiveRsiStrategy
 from .bollinger_bands import BollingerBands
 from .bollinger_rsi import BollingerRsi
 from .dca import DcaStrategy
@@ -36,6 +37,7 @@ def default_registry() -> StrategyRegistry:
     reg = StrategyRegistry()
     reg.register("SmaCross", SmaCross)
     reg.register("RsiThreshold", RsiThreshold)
+    reg.register("AdaptiveRsi", AdaptiveRsiStrategy)
     reg.register("MacdCross", MacdCross)
     reg.register("BollingerBands", BollingerBands)
     reg.register("BollingerRsi", BollingerRsi)
@@ -45,6 +47,7 @@ def default_registry() -> StrategyRegistry:
 
 
 __all__ = [
+    "AdaptiveRsiStrategy",
     "BollingerBands",
     "BollingerRsi",
     "DcaStrategy",
