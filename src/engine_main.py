@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import signal
 from decimal import Decimal
+from urllib.parse import urlsplit, urlunsplit
 
 from cryptography.fernet import Fernet
 from redis.asyncio import Redis
@@ -25,6 +26,7 @@ from infrastructure.db_repositories import (
     DecryptedCredential,
 )
 from infrastructure.logging import configure_logging, get_logger
+from infrastructure.metrics import EngineMetricsServer
 from infrastructure.redis_event_bus import RedisEventBus
 from infrastructure.settings import load_settings
 from infrastructure.state_manager import StateManager
@@ -90,6 +92,18 @@ async def _run() -> None:
         balance_poll_interval_sec=settings.balance_poll_interval_sec,
         snapshot_ttl_sec=settings.state_snapshot_ttl_sec,
     )
+    metrics_server: EngineMetricsServer | None = None
+    if settings.metrics_enabled:
+        metrics_server = await EngineMetricsServer.start(
+            settings.metrics_host,
+            settings.metrics_port,
+            orchestrator,
+        )
+        logger.info(
+            "metrics_server_started",
+            host=settings.metrics_host,
+            port=settings.metrics_port,
+        )
 
     stop_event = asyncio.Event()
 
@@ -105,7 +119,11 @@ async def _run() -> None:
     loop.add_signal_handler(signal.SIGTERM, _handle_signal, "SIGTERM")
     loop.add_signal_handler(signal.SIGINT, _handle_signal, "SIGINT")
 
-    logger.info("engine_starting", redis=settings.redis_url, db=settings.database_url)
+    logger.info(
+        "engine_starting",
+        redis=_redact_url(settings.redis_url),
+        db=_redact_url(settings.database_url),
+    )
 
     listener_task = asyncio.create_task(listener.run(), name="command-listener")
     state_task = asyncio.create_task(state_manager.run(), name="state-manager")
@@ -115,6 +133,8 @@ async def _run() -> None:
     finally:
         logger.info("engine_shutting_down")
         await asyncio.gather(listener_task, state_task, return_exceptions=True)
+        if metrics_server is not None:
+            await metrics_server.stop()
         await orchestrator.shutdown()
         await redis.aclose()
         await db_engine.dispose()
@@ -124,6 +144,19 @@ async def _run() -> None:
 def main() -> None:
     """Sync entrypoint для [project.scripts]/`python -m`."""
     asyncio.run(_run())
+
+
+def _redact_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if not parsed.netloc:
+        return value
+    if "@" not in parsed.netloc:
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+    userinfo, hostinfo = parsed.netloc.rsplit("@", 1)
+    username = userinfo.split(":", 1)[0]
+    netloc = f"{username}:***@{hostinfo}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 if __name__ == "__main__":

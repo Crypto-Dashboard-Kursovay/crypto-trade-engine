@@ -33,6 +33,8 @@ COPY --chown=app:app src ./src
 
 USER app
 
+EXPOSE 9100
+
 # Healthcheck: процесс жив, если в Redis недавно был heartbeat.
 # Просто сверяемся, что python процесс не упал — детальный мониторинг engine.status
 # из бэка (Phase 3.4).

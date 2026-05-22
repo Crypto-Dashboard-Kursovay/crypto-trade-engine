@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "structlog>=24.1",
     "cryptography>=42",
+    "prometheus-client>=0.22",
     "tenacity>=9",
 ]
 
@@ -37,7 +38,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["engine_main", "backtest_main"]
+py-modules = ["engine_main", "backtest_main", "healthcheck"]
 
 [tool.setuptools.package-dir]
 "" = "src"

@@ -29,6 +29,9 @@ class EngineSettings(BaseSettings):
     balance_poll_interval_sec: int = Field(default=15, ge=1)
     state_snapshot_ttl_sec: int = Field(default=30, ge=5)
     command_dedup_ttl_sec: int = Field(default=86400, ge=60)
+    metrics_enabled: bool = Field(default=True)
+    metrics_host: str = Field(default="0.0.0.0")
+    metrics_port: int = Field(default=9100, ge=1, le=65535)
 
 
 def load_settings() -> EngineSettings:
