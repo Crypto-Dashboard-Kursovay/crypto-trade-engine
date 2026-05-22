@@ -28,6 +28,11 @@ backtest = [
     "pandas>=2.2",
     "tqdm>=4.66",
 ]
+ml = [
+    "scikit-learn>=1.4",
+    "lightgbm>=4.3",
+    "joblib>=1.4",
+]
 
 [project.scripts]
 trade-engine = "engine_main:main"

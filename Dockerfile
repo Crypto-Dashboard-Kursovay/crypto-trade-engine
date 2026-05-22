@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip wheel --no-cache-dir --wheel-dir /build/wheels .
+    pip wheel --no-cache-dir --wheel-dir /build/wheels ".[backtest,ml]"
 
 FROM python:3.14-slim AS runtime
 
@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libpq5 && \
+      libpq5 libgomp1 && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --gid ${APP_GID} app 2>/dev/null || true && \
     useradd --create-home --uid ${APP_UID} --gid ${APP_GID} app

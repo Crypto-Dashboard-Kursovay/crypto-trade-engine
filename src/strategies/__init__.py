@@ -13,6 +13,7 @@ from .bollinger_bands import BollingerBands
 from .bollinger_rsi import BollingerRsi
 from .dca import DcaStrategy
 from .macd_cross import MacdCross
+from .ml_rsi import MlRsiStrategy
 from .rsi_threshold import RsiThreshold
 from .sma_cross import SmaCross
 from .spot_grid import SpotGridStrategy
@@ -43,6 +44,7 @@ def default_registry() -> StrategyRegistry:
     reg.register("BollingerRsi", BollingerRsi)
     reg.register("DcaStrategy", DcaStrategy)
     reg.register("SpotGridStrategy", SpotGridStrategy)
+    reg.register("MlRsi", MlRsiStrategy)
     return reg
 
 
@@ -52,6 +54,7 @@ __all__ = [
     "BollingerRsi",
     "DcaStrategy",
     "MacdCross",
+    "MlRsiStrategy",
     "RsiThreshold",
     "SmaCross",
     "SpotGridStrategy",
