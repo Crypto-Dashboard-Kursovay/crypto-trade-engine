@@ -6,8 +6,11 @@ Usage: python -m healthcheck
 """
 
 import asyncio
+import inspect
 import os
 import sys
+from collections.abc import Awaitable
+from typing import Any, cast
 
 import redis.asyncio as redis
 
@@ -16,7 +19,9 @@ async def _check() -> bool:
     url = os.getenv("ENGINE_REDIS_URL", "redis://redis:6379/0")
     try:
         r = redis.from_url(url)
-        await r.ping()
+        pong = r.ping()
+        if inspect.isawaitable(pong):
+            await cast(Awaitable[Any], pong)
         await r.aclose()
         return True
     except Exception:
