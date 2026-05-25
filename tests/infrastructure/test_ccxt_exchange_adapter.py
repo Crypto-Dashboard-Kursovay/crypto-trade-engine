@@ -10,6 +10,7 @@ from domain.exceptions import OrderExecutionError
 from infrastructure.ccxt_exchange_adapter import (
     SUPPORTED_EXCHANGES,
     CCXTExchangeAdapter,
+    _to_binance_spot_balances,
     _to_balances,
     _to_candle,
     _to_order,
@@ -23,6 +24,7 @@ def _fake_exchange() -> MagicMock:
     ex.fetch_ohlcv = AsyncMock()
     ex.create_order = AsyncMock()
     ex.fetch_balance = AsyncMock()
+    ex.privateGetAccount = AsyncMock()
     ex.close = AsyncMock()
     ex.set_sandbox_mode = MagicMock()
     return ex
@@ -158,21 +160,19 @@ async def test_create_order_wraps_ccxt_error() -> None:
 
 async def test_get_balance_normalizes_and_skips_zero() -> None:
     ex = _fake_exchange()
-    ex.fetch_balance.return_value = {
-        "USDT": {"free": 100.5, "used": 0, "total": 100.5},
-        "BTC": {"free": 0.001, "used": 0.0005, "total": 0.0015},
-        "ETH": {"free": 0, "used": 0, "total": 0},  # должен быть пропущен
-        "free": {"USDT": 100.5},
-        "used": {},
-        "total": {"USDT": 100.5},
-        "info": {"raw": "exchange-specific"},
-        "timestamp": 1234,
-        "datetime": "2026-05-12",
+    ex.privateGetAccount.return_value = {
+        "balances": [
+            {"asset": "USDT", "free": "100.5", "locked": "0"},
+            {"asset": "BTC", "free": "0.001", "locked": "0.0005"},
+            {"asset": "ETH", "free": "0", "locked": "0"},
+        ]
     }
     adapter = _adapter(ex)
 
     balances = await adapter.get_balance()
 
+    ex.privateGetAccount.assert_awaited_once()
+    ex.fetch_balance.assert_not_awaited()
     assert set(balances.keys()) == {"USDT", "BTC"}
     assert balances["USDT"].free == Decimal("100.5")
     assert balances["BTC"].free == Decimal("0.001")
@@ -181,6 +181,21 @@ async def test_get_balance_normalizes_and_skips_zero() -> None:
 
 
 # ---------- raw normalization helpers ----------
+
+
+def test_to_binance_spot_balances_uses_free_plus_locked() -> None:
+    balances = _to_binance_spot_balances(
+        {
+            "balances": [
+                {"asset": "BNB", "free": "1.25", "locked": "0.75"},
+                {"asset": "XRP", "free": "0", "locked": "0"},
+            ]
+        }
+    )
+    assert set(balances) == {"BNB"}
+    assert balances["BNB"].free == Decimal("1.25")
+    assert balances["BNB"].used == Decimal("0.75")
+    assert balances["BNB"].total == Decimal("2.00")
 
 
 def test_to_candle_decimal_precision() -> None:

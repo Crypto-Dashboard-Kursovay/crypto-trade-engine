@@ -88,6 +88,8 @@ async def _run() -> None:
         redis=redis,
         event_bus=event_bus,
         orchestrator=orchestrator,
+        credential_repo=credential_repo,
+        balance_exchange_factory=_exchange_factory,
         heartbeat_interval_sec=settings.heartbeat_interval_sec,
         balance_poll_interval_sec=settings.balance_poll_interval_sec,
         snapshot_ttl_sec=settings.state_snapshot_ttl_sec,

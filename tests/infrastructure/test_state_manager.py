@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
@@ -41,6 +42,12 @@ def _running(
     running.adapter.get_balance = AsyncMock(return_value=balances)
     running.adapter.get_positions = AsyncMock(return_value=[])
     return running
+
+
+@dataclass(frozen=True, slots=True)
+class _Credential:
+    id: uuid.UUID
+    exchange: str = "binance"
 
 
 async def test_heartbeat_publishes_engine_status(
@@ -110,6 +117,88 @@ async def test_balance_poll_publishes_per_bot(
     assert payload["credential_id"] == str(running.credential_id)
     assert payload["balances"]["USDT"]["free"] == "100.5"
     assert payload["balances"]["BTC"]["total"] == "0.001"
+
+
+async def test_balance_poll_publishes_per_credential_without_running_bots(
+    redis: fakeredis.aioredis.FakeRedis, event_bus: AsyncMock
+) -> None:
+    cred = _Credential(uuid.uuid4())
+    repo = AsyncMock()
+    repo.list_decrypted = AsyncMock(return_value=[cred])
+    adapter = AsyncMock()
+    adapter.get_balance = AsyncMock(
+        return_value={
+            "USDT": Balance("USDT", Decimal("75"), Decimal("25"), Decimal("100")),
+        }
+    )
+    adapter.close = AsyncMock()
+    factory = MagicMock(return_value=adapter)
+    orchestrator = MagicMock()
+    orchestrator.active_bot_ids = []
+    orchestrator.iter_running = MagicMock(return_value=[])
+
+    sm = StateManager(
+        redis=redis,
+        event_bus=event_bus,
+        orchestrator=orchestrator,
+        credential_repo=repo,
+        balance_exchange_factory=factory,
+        heartbeat_interval_sec=60,
+        balance_poll_interval_sec=1,
+        snapshot_ttl_sec=10,
+    )
+
+    task = asyncio.create_task(sm.run())
+    await asyncio.sleep(0.05)
+    sm.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    balance_calls = [
+        call.args for call in event_bus.publish.call_args_list if call.args[0] == BALANCE_UPDATE
+    ]
+    assert len(balance_calls) >= 1
+    _, payload = balance_calls[0]
+    assert "bot_id" not in payload
+    assert payload["credential_id"] == str(cred.id)
+    assert payload["exchange"] == "binance"
+    assert payload["balances"]["USDT"]["total"] == "100"
+
+
+async def test_balance_poll_closes_removed_credential_adapter(
+    redis: fakeredis.aioredis.FakeRedis, event_bus: AsyncMock
+) -> None:
+    cred = _Credential(uuid.uuid4())
+    repo = AsyncMock()
+    repo.list_decrypted = AsyncMock(side_effect=[[cred], []])
+    adapter = AsyncMock()
+    adapter.get_balance = AsyncMock(
+        return_value={
+            "USDT": Balance("USDT", Decimal("100"), Decimal("0"), Decimal("100")),
+        }
+    )
+    adapter.close = AsyncMock()
+    factory = MagicMock(return_value=adapter)
+    orchestrator = MagicMock()
+    orchestrator.active_bot_ids = []
+    orchestrator.iter_running = MagicMock(return_value=[])
+
+    sm = StateManager(
+        redis=redis,
+        event_bus=event_bus,
+        orchestrator=orchestrator,
+        credential_repo=repo,
+        balance_exchange_factory=factory,
+        heartbeat_interval_sec=60,
+        balance_poll_interval_sec=1,
+        snapshot_ttl_sec=10,
+    )
+
+    task = asyncio.create_task(sm.run())
+    await asyncio.sleep(1.2)
+    sm.stop()
+    await asyncio.wait_for(task, timeout=3.0)
+
+    adapter.close.assert_awaited_once()
 
 
 async def test_snapshot_writes_to_redis(

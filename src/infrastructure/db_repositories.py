@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from domain.enums import TimeFrame
@@ -73,28 +74,39 @@ class CredentialRepository:
             row = await session.get(ExchangeCredential, cred_id)
             if row is None:
                 return None
-            try:
-                api_key = self._fernet.decrypt(row.api_key_enc.encode()).decode()
-                api_secret = self._fernet.decrypt(row.api_secret_enc.encode()).decode()
-                passphrase: str | None = None
-                if row.passphrase_enc:
-                    passphrase = self._fernet.decrypt(
-                        row.passphrase_enc.encode()
-                    ).decode()
-            except InvalidToken as exc:
-                logger.error(
-                    "credential_decrypt_failed",
-                    credential_id=str(cred_id),
-                    hint="ENGINE_ENCRYPTION_KEY likely doesn't match BACKEND_ENCRYPTION_KEY",
-                )
-                raise CredentialDecryptError(
-                    f"Cannot decrypt credential {cred_id}. "
-                    "ENGINE_ENCRYPTION_KEY must match BACKEND_ENCRYPTION_KEY."
-                ) from exc
-            return DecryptedCredential(
-                id=row.id,
-                exchange=row.exchange,
-                api_key=api_key,
-                api_secret=api_secret,
-                passphrase=passphrase,
+            return self._decrypt_row(row)
+
+    async def list_decrypted(self) -> list[DecryptedCredential]:
+        async with self._session_factory() as session:
+            result = await session.execute(select(ExchangeCredential))
+            rows = result.scalars().all()
+
+        credentials: list[DecryptedCredential] = []
+        for row in rows:
+            credentials.append(self._decrypt_row(row))
+        return credentials
+
+    def _decrypt_row(self, row: ExchangeCredential) -> DecryptedCredential:
+        try:
+            api_key = self._fernet.decrypt(row.api_key_enc.encode()).decode()
+            api_secret = self._fernet.decrypt(row.api_secret_enc.encode()).decode()
+            passphrase: str | None = None
+            if row.passphrase_enc:
+                passphrase = self._fernet.decrypt(row.passphrase_enc.encode()).decode()
+        except InvalidToken as exc:
+            logger.error(
+                "credential_decrypt_failed",
+                credential_id=str(row.id),
+                hint="ENGINE_ENCRYPTION_KEY likely doesn't match BACKEND_ENCRYPTION_KEY",
             )
+            raise CredentialDecryptError(
+                f"Cannot decrypt credential {row.id}. "
+                "ENGINE_ENCRYPTION_KEY must match BACKEND_ENCRYPTION_KEY."
+            ) from exc
+        return DecryptedCredential(
+            id=row.id,
+            exchange=row.exchange,
+            api_key=api_key,
+            api_secret=api_secret,
+            passphrase=passphrase,
+        )

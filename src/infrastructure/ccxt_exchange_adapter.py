@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
+from inspect import isawaitable
 from typing import Any
 
 import ccxt.pro as ccxtpro
@@ -196,6 +197,13 @@ class CCXTExchangeAdapter(ExchangeAdapter):
 
     @_network_retry()  # type: ignore[untyped-decorator]
     async def get_balance(self) -> Mapping[str, Balance]:
+        if self._exchange_name == "binance":
+            method = getattr(self._exchange, "privateGetAccount", None)
+            if callable(method):
+                result = method()
+                raw_account = await result if isawaitable(result) else result
+                if isinstance(raw_account, Mapping):
+                    return _to_binance_spot_balances(raw_account)
         raw = await self._exchange.fetch_balance()
         return _to_balances(raw)
 
@@ -285,6 +293,28 @@ def _to_balances(raw: Mapping[str, Any]) -> dict[str, Balance]:
             continue
         free = Decimal(str(body.get("free") or 0))
         used = Decimal(str(body.get("used") or 0))
+        if free == 0 and used == 0:
+            continue
+        out[code] = Balance(currency=code, free=free, used=used, total=free + used)
+    return out
+
+
+def _to_binance_spot_balances(raw: Mapping[str, Any]) -> dict[str, Balance]:
+    """Binance raw /api/v3/account payload: balances[] with free + locked."""
+    out: dict[str, Balance] = {}
+    balances_raw = raw.get("balances", [])
+    if not isinstance(balances_raw, list):
+        return out
+
+    for item in balances_raw:
+        if not isinstance(item, Mapping):
+            continue
+        code_raw = item.get("asset")
+        if not code_raw:
+            continue
+        code = str(code_raw)
+        free = Decimal(str(item.get("free") or 0))
+        used = Decimal(str(item.get("locked") or 0))
         if free == 0 and used == 0:
             continue
         out[code] = Balance(currency=code, free=free, used=used, total=free + used)
