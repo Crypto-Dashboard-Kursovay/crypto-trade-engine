@@ -1,6 +1,8 @@
 import asyncio
 import json
 import uuid
+from dataclasses import dataclass, field
+from typing import Any
 from unittest.mock import AsyncMock
 
 import fakeredis.aioredis
@@ -8,6 +10,26 @@ import pytest
 
 from application.events import COMMAND_START, COMMAND_STOP, COMMAND_UPDATE
 from infrastructure.command_listener import CommandListener
+
+
+@dataclass(slots=True)
+class PendingCommand:
+    command_id: uuid.UUID
+    bot_id: uuid.UUID
+    kind: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+class FakeCommandRepository:
+    def __init__(self, commands: list[PendingCommand]) -> None:
+        self.commands = commands
+        self.processed: list[uuid.UUID] = []
+
+    async def list_pending(self, *, limit: int = 100) -> list[PendingCommand]:
+        return [cmd for cmd in self.commands if cmd.command_id not in self.processed][:limit]
+
+    async def mark_processed(self, command_id: uuid.UUID) -> None:
+        self.processed.append(command_id)
 
 
 @pytest.fixture
@@ -103,6 +125,36 @@ async def test_duplicate_command_id_is_skipped(
     assert await redis.get(f"engine:commands:processed:{cmd_id}") is not None
 
 
+async def test_pubsub_command_marks_pending_record_processed(
+    redis: fakeredis.aioredis.FakeRedis, orchestrator: AsyncMock
+) -> None:
+    command = PendingCommand(
+        command_id=uuid.uuid4(),
+        bot_id=uuid.uuid4(),
+        kind="start",
+    )
+    repo = FakeCommandRepository([])
+    listener = CommandListener(
+        redis,
+        orchestrator,
+        command_repository=repo,
+        dedup_ttl_sec=60,
+        pending_poll_interval_sec=60,
+    )
+    task = asyncio.create_task(listener.run())
+    await asyncio.sleep(0.05)
+    await redis.publish(
+        COMMAND_START,
+        json.dumps({"command_id": str(command.command_id), "bot_id": str(command.bot_id)}),
+    )
+    await asyncio.sleep(0.2)
+    listener.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    orchestrator.start_strategy.assert_awaited_once_with(command.bot_id)
+    assert repo.processed == [command.command_id]
+
+
 async def test_missing_required_fields_logged_not_dispatched(
     redis: fakeredis.aioredis.FakeRedis, orchestrator: AsyncMock
 ) -> None:
@@ -155,3 +207,94 @@ async def test_handler_failure_does_not_kill_listener(
     )
     # Оба сообщения попали в handler, listener не упал.
     assert orchestrator.start_strategy.await_count == 2
+
+
+async def test_pending_start_command_from_db_is_dispatched(
+    redis: fakeredis.aioredis.FakeRedis, orchestrator: AsyncMock
+) -> None:
+    command = PendingCommand(
+        command_id=uuid.uuid4(),
+        bot_id=uuid.uuid4(),
+        kind="start",
+    )
+    repo = FakeCommandRepository([command])
+    listener = CommandListener(
+        redis,
+        orchestrator,
+        command_repository=repo,
+        dedup_ttl_sec=60,
+        pending_poll_interval_sec=0.01,
+    )
+    task = asyncio.create_task(listener.run())
+    await asyncio.sleep(0.1)
+    listener.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    orchestrator.start_strategy.assert_awaited_once_with(command.bot_id)
+    assert repo.processed == [command.command_id]
+
+
+async def test_pending_duplicate_command_is_marked_processed_without_dispatch(
+    redis: fakeredis.aioredis.FakeRedis, orchestrator: AsyncMock
+) -> None:
+    command = PendingCommand(
+        command_id=uuid.uuid4(),
+        bot_id=uuid.uuid4(),
+        kind="start",
+    )
+    await redis.set(f"engine:commands:processed:{command.command_id}", "1", ex=60)
+    repo = FakeCommandRepository([command])
+    listener = CommandListener(
+        redis,
+        orchestrator,
+        command_repository=repo,
+        dedup_ttl_sec=60,
+        pending_poll_interval_sec=0.01,
+    )
+    task = asyncio.create_task(listener.run())
+    await asyncio.sleep(0.1)
+    listener.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    orchestrator.start_strategy.assert_not_awaited()
+    assert repo.processed == [command.command_id]
+
+
+@pytest.mark.parametrize(
+    ("kind", "method"),
+    [("stop", "stop_strategy"), ("update", "update_strategy")],
+)
+async def test_pending_stop_and_update_commands_are_dispatched(
+    redis: fakeredis.aioredis.FakeRedis,
+    orchestrator: AsyncMock,
+    kind: str,
+    method: str,
+) -> None:
+    command = PendingCommand(
+        command_id=uuid.uuid4(),
+        bot_id=uuid.uuid4(),
+        kind=kind,
+        payload={"params": {"order_size": "0.01"}},
+    )
+    repo = FakeCommandRepository([command])
+    listener = CommandListener(
+        redis,
+        orchestrator,
+        command_repository=repo,
+        dedup_ttl_sec=60,
+        pending_poll_interval_sec=0.01,
+    )
+    task = asyncio.create_task(listener.run())
+    await asyncio.sleep(0.1)
+    listener.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    called = getattr(orchestrator, method)
+    if kind == "update":
+        called.assert_awaited_once()
+        args = called.await_args.args
+        assert args[0] == command.bot_id
+        assert args[1]["command_id"] == str(command.command_id)
+    else:
+        called.assert_awaited_once_with(command.bot_id)
+    assert repo.processed == [command.command_id]

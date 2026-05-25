@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from domain.enums import TimeFrame
 
-from .db_models import Bot, ExchangeCredential
+from .db_models import Bot, BotCommand, CommandKind, ExchangeCredential
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,6 +38,14 @@ class DecryptedCredential:
     passphrase: str | None = None  # OKX и Coinbase Pro
 
 
+@dataclass(frozen=True, slots=True)
+class PendingBotCommand:
+    command_id: uuid.UUID
+    bot_id: uuid.UUID
+    kind: str
+    payload: dict[str, Any]
+
+
 class CredentialDecryptError(Exception):
     """Не удалось расшифровать credential — обычно несовпадение Fernet-ключей с бэком."""
 
@@ -58,6 +67,63 @@ class BotRepository:
                 timeframe=TimeFrame(row.timeframe),
                 params=dict(row.params),
             )
+
+
+class BotCommandRepository:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def list_pending(
+        self, *, limit: int = 100, max_age_sec: int = 86400
+    ) -> list[PendingBotCommand]:
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=max_age_sec)
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(BotCommand)
+                .join(Bot, Bot.id == BotCommand.bot_id)
+                .where(BotCommand.processed_at.is_(None))
+                .where(BotCommand.created_at >= cutoff)
+                .where(
+                    or_(
+                        and_(
+                            BotCommand.kind == CommandKind.START,
+                            Bot.status.in_(["starting", "running"]),
+                        ),
+                        and_(
+                            BotCommand.kind == CommandKind.STOP,
+                            Bot.status.in_(["stopping", "stopped"]),
+                        ),
+                        and_(
+                            BotCommand.kind == CommandKind.UPDATE,
+                            Bot.status.in_(["starting", "running"]),
+                        ),
+                    )
+                )
+                .order_by(BotCommand.created_at.asc(), BotCommand.id.asc())
+                .limit(limit)
+            )
+            rows = result.scalars().all()
+        return [
+            PendingBotCommand(
+                command_id=row.command_id,
+                bot_id=row.bot_id,
+                kind=row.kind.value,
+                payload=dict(row.payload),
+            )
+            for row in rows
+        ]
+
+    async def mark_processed(self, command_id: uuid.UUID) -> None:
+        async with self._session_factory() as session:
+            await session.execute(
+                update(BotCommand)
+                .where(
+                    BotCommand.command_id == command_id,
+                    BotCommand.processed_at.is_(None),
+                )
+                .values(processed_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
 
 
 class CredentialRepository:

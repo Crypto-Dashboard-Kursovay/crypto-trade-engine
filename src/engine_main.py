@@ -22,6 +22,7 @@ from infrastructure.command_listener import CommandListener
 from infrastructure.db import create_engine, create_session_factory
 from infrastructure.db_repositories import (
     BotRepository,
+    BotCommandRepository,
     CredentialRepository,
     DecryptedCredential,
 )
@@ -62,6 +63,7 @@ async def _run() -> None:
     event_bus = RedisEventBus(redis)
     fernet = Fernet(settings.encryption_key.encode())
     bot_repo = BotRepository(session_factory)
+    command_repo = BotCommandRepository(session_factory)
     credential_repo = CredentialRepository(session_factory, fernet)
 
     # Phase 1: дефолтные риск-параметры. В Phase 3+ можно вынести в env или per-bot.
@@ -82,7 +84,11 @@ async def _run() -> None:
     )
 
     listener = CommandListener(
-        redis, orchestrator, dedup_ttl_sec=settings.command_dedup_ttl_sec
+        redis,
+        orchestrator,
+        command_repository=command_repo,
+        dedup_ttl_sec=settings.command_dedup_ttl_sec,
+        pending_poll_interval_sec=settings.command_poll_interval_sec,
     )
     state_manager = StateManager(
         redis=redis,

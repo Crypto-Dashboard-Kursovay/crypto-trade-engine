@@ -8,16 +8,24 @@
 
 from __future__ import annotations
 
+import enum
 import uuid
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class CommandKind(str, enum.Enum):
+    START = "start"
+    STOP = "stop"
+    UPDATE = "update"
 
 
 class Bot(Base):
@@ -33,6 +41,7 @@ class Bot(Base):
     symbol: Mapped[str] = mapped_column(String(32), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class ExchangeCredential(Base):
@@ -44,3 +53,26 @@ class ExchangeCredential(Base):
     api_secret_enc: Mapped[str] = mapped_column(String, nullable=False)
     # OKX / Coinbase Pro используют третий секрет (passphrase). Для прочих — NULL.
     passphrase_enc: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class BotCommand(Base):
+    __tablename__ = "bot_commands"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    command_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    bot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("bots.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[CommandKind] = mapped_column(
+        SAEnum(
+            CommandKind,
+            name="command_kind",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
